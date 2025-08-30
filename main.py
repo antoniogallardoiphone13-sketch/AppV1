@@ -1,46 +1,64 @@
 import os
-from flask import Flask, request
+from flask import Flask, request, render_template_string
+from PIL import Image
+import requests
+from transformers import BlipProcessor, BlipForConditionalGeneration
 from huggingface_hub import InferenceClient
 
 app = Flask(__name__)
 
-# Inicializa el cliente de Hugging Face
-client = InferenceClient(
+# Inicializamos BLIP
+processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
+model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large")
+
+# Inicializamos Hugging Face InferenceClient
+hf_client = InferenceClient(
     provider="fireworks-ai",
-    api_key=os.environ.get("HF_TOKEN"),  # Asegúrate de tener HF_TOKEN en variables de entorno
+    api_key=os.environ.get("HF_TOKEN"),  # asegurate de tener la variable de entorno HF_TOKEN
 )
 
+# HTML simple para subir imágenes
 HTML_PAGE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Prueba Hugging Face</title>
-</head>
-<body>
-    <h1>Prueba tu modelo Hugging Face</h1>
-    <form method="POST">
-        <input type="text" name="question" placeholder="Escribe tu pregunta aquí" style="width:300px;">
-        <button type="submit">Enviar</button>
-    </form>
-    {answer_block}
-</body>
-</html>
+<!doctype html>
+<title>Sube una imagen</title>
+<h1>Sube una imagen para obtener la descripción y calorías</h1>
+<form method=post enctype=multipart/form-data>
+  <input type=file name=file>
+  <input type=submit value=Upload>
+</form>
+{% if description %}
+<h2>Descripción generada:</h2>
+<p>{{ description }}</p>
+<h2>Calorías estimadas:</h2>
+<p>{{ calories }}</p>
+{% endif %}
 """
 
 @app.route("/", methods=["GET", "POST"])
-def index():
-    answer_block = ""
+def upload_image():
+    description = None
+    calories = None
+
     if request.method == "POST":
-        question = request.form.get("question")
-        if question:
-            completion = client.chat.completions.create(
+        file = request.files["file"]
+        if file:
+            image = Image.open(file).convert("RGB")
+            
+            # 1️⃣ Generamos descripción con BLIP
+            text_prompt = "a photography of"
+            inputs = processor(image, text_prompt, return_tensors="pt")
+            out = model.generate(**inputs)
+            description = processor.decode(out[0], skip_special_tokens=True)
+
+            # 2️⃣ Preguntamos calorías con Hugging Face
+            prompt = f"How many calories does this contain? {description}"
+            completion = hf_client.chat.completions.create(
                 model="deepseek-ai/DeepSeek-V3.1",
-                messages=[{"role": "user", "content": question}],
+                messages=[{"role": "user", "content": prompt}],
             )
-            answer = completion.choices[0].message["content"]
-            answer_block = f"<h2>Respuesta:</h2><p>{answer}</p>"
-    return HTML_PAGE.format(answer_block=answer_block)
+            calories = completion.choices[0].message["content"]
+
+    return render_template_string(HTML_PAGE, description=description, calories=calories)
 
 if __name__ == "__main__":
     app.run(debug=True)
