@@ -6,7 +6,7 @@ app = Flask(__name__)
 # Configuración del cliente OpenAI/Hugging Face
 client = OpenAI(
     base_url="https://router.huggingface.co/v1",
-    api_key="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"
+    api_key="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"
 )
 
 # Función que llama al modelo
